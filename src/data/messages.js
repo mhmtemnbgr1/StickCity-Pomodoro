@@ -1,0 +1,62 @@
+export const MOTIVATIONAL_MESSAGES = [
+  "Bugün harika gidiyoruz!",
+  "Sen yaparsın, hep yaptın!",
+  "Bir adım daha atıyoruz!",
+  "Medeniyetimiz büyüyor!",
+  "Birlikte inşa ediyoruz!",
+  "Harika iş çıkardın!",
+  "Görev tamamlandı, gurur duyuyoruz!",
+  "Lider budur işte!",
+  "Devam et, durma!",
+  "Başarı peşinde koşuyoruz!",
+  "Şehrimiz seninle güçleniyor!",
+  "Bugün tarih yazıyoruz!",
+  "Pomodoro bitmek bilmez!",
+  "Konsantrasyon modu: AÇIK",
+  "Sen olmasan bu şehir olmazdı!",
+  "Vatandaşlar seni seviyor!",
+  "Vergileri ödüyoruz, şehir büyüyor!",
+  "Bir görev daha, bir adım daha!",
+  "Bugün hedefimize ulaşacağız!",
+  "Mola bitti, geri döndük!",
+  "Kahveni al, devam edelim!",
+  "Aklın berrak, elin hızlı!",
+  "Harikasın, gerçekten!",
+  "Şehir seninle gururlanıyor!",
+  "Yeni bir bina için çalışıyoruz!",
+  "Nüfusumuz artıyor, harika!",
+  "Odaklan, biz yanındayız!",
+  "İmparatorluk bu şekilde kurulur!",
+  "Her görev bir tuğla daha!",
+  "Tarihe geçiyoruz bugün!",
+];
+
+export const UNHAPPY_MESSAGES = [
+  "Bugün biraz zor geçti...",
+  "Endişeleniyoruz biraz...",
+  "Yarın daha iyi olacak!",
+  "Mola mu verdin? Anlıyoruz.",
+  "Liderimiz nerede?",
+  "Şehir seni bekliyor...",
+  "Geri dön, ihtiyacımız var!",
+  "Bugün zor bir gündü...",
+  "Umudumuz hâlâ var!",
+  "Yarın güneş doğacak!",
+];
+
+export const PROFESSIONS = [
+  { name: "Çiftçi", iconName: "Wheat", color: "#a8cc8c" },
+  { name: "Doktor", iconName: "Cross", color: "#ff6b9d" },
+  { name: "Mühendis", iconName: "Wrench", color: "#4fc3f7" },
+  { name: "Tüccar", iconName: "Briefcase", color: "#ffb74d" },
+  { name: "Asker", iconName: "Swords", color: "#ef9a9a" },
+  { name: "Öğretmen", iconName: "BookOpen", color: "#ce93d8" },
+  { name: "Mimar", iconName: "Compass", color: "#80cbc4" },
+];
+
+export const STICKMAN_NAMES = [
+  "Ali", "Ayşe", "Mehmet", "Fatma", "Ahmet", "Zeynep", "Mustafa", "Emine",
+  "İbrahim", "Hatice", "Hüseyin", "Meryem", "Hasan", "Rukiye", "Yusuf",
+  "Elif", "Ömer", "Hacer", "İsmail", "Rabia", "Murat", "Sevgi", "Kemal",
+  "Aslı", "Burak", "Ceren", "Emre", "Deniz", "Furkan", "Gizem",
+];
