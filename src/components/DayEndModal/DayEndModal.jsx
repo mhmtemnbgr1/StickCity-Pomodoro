@@ -24,25 +24,25 @@ export default function DayEndModal() {
           {isGood
             ? 'Harika Gün!'
             : isShielded
-            ? 'Kale Korudu!'
+            ? 'Belediye Korudu!'
             : lostCount > 0
-            ? 'Vatandaşlar Kaçtı!'
+            ? 'Sakinler Taşındı!'
             : 'Zor Bir Gün...'}
         </h2>
 
         <p className="modal-subtitle">
           {isGood
-            ? `Görevlerin %${Math.round(ratio * 100)}'ini tamamladın! Halk mutlu, medeniyet büyüyor! ${passiveIncome > 0 ? `Pasif gelir: +${passiveIncome} altın` : ''}`
+            ? `Görevlerin %${Math.round(ratio * 100)}'ini tamamladın! Halk mutlu, şehir büyüyor! ${passiveIncome > 0 ? `Pasif gelir: +${passiveIncome} altın` : ''}`
             : isShielded
-            ? `Görevlerin %${Math.round(ratio * 100)}'i tamamlandı. Kale nüfus kaybını engelledi! Mutluluk -${happinessLoss}.`
-            : `Görevlerin sadece %${Math.round(ratio * 100)}'i tamamlandı. ${lostCount > 0 ? `${lostCount} vatandaş şehri terk etti!` : `Halk mutsuzluğu -${happinessLoss} arttı.`}`
+            ? `Görevlerin %${Math.round(ratio * 100)}'i tamamlandı. Belediye nüfus kaybını engelledi! Mutluluk -${happinessLoss}.`
+            : `Görevlerin sadece %${Math.round(ratio * 100)}'i tamamlandı. ${lostCount > 0 ? `${lostCount} sakin şehri terk etti!` : `Halk mutsuzluğu -${happinessLoss} arttı.`}`
           }
         </p>
 
         <div className="modal-stats">
           <div className="modal-stat-item">
             <span className="modal-stat-value" style={{ color: 'var(--green)' }}>
-              {state.todayCompleted || 0}
+              {state.dayEndResult.completed || 0}
             </span>
             <span className="modal-stat-label">Tamamlanan</span>
           </div>

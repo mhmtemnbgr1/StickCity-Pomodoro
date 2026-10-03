@@ -77,6 +77,8 @@ function AppInner() {
             id="day-end-btn"
             className="day-end-btn"
             onClick={handleDayEnd}
+            disabled={state.dayEnded}
+            title={state.dayEnded ? 'Bugün zaten bitti' : 'Günü değerlendir'}
             style={{ display: 'flex', alignItems: 'center', gap: 4 }}
           >
             <Moon size={16} /> Günü Bitir

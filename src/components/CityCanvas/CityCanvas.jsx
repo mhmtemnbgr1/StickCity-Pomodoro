@@ -1,160 +1,187 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useCivilization } from '../../store/CivilizationContext.jsx';
 import { MOTIVATIONAL_MESSAGES, UNHAPPY_MESSAGES } from '../../data/messages.js';
 import StickmanCharacter from '../StickmanCharacter/StickmanCharacter.jsx';
 import SceneBuilding from './SceneBuilding.jsx';
-import { Users, AlertTriangle, MessageCircle } from 'lucide-react';
+import Scenery from './Scenery.jsx';
+import { Users, AlertTriangle, MessageCircle, CloudRain, Sun } from 'lucide-react';
 
-// Decorative trees placed randomly around the edges
-const TREES = Array.from({ length: 24 }, (_, i) => {
-  const isTop = i % 2 === 0;
-  const x = 2 + (i * 7) % 96;
-  const y = isTop ? 10 + (Math.random() * 15) : 80 + (Math.random() * 15);
-  return {
-    id: i,
-    x,
-    y,
-    scale: 0.7 + (i % 3) * 0.2,
-  };
-});
+// Walkable ground (percent of canvas)
+const ZONE = { xMin: 5, xMax: 95, yMin: 38, yMax: 91 };
+const SPEED_PX = 120; // px/s per unit of `speed`
+
+const rand = (a, b) => a + Math.random() * (b - a);
+
+function insideBuilding(x, y, buildings) {
+  return buildings.some(b => Math.abs(x - b.x) < 4.5 && y < b.y + 1.5 && y > b.y - 13);
+}
+
+function pickTarget(actor, buildings) {
+  for (let i = 0; i < 10; i++) {
+    const tx = rand(ZONE.xMin, ZONE.xMax);
+    const ty = rand(ZONE.yMin, ZONE.yMax);
+    if (!insideBuilding(tx, ty, buildings)) {
+      actor.tx = tx;
+      actor.ty = ty;
+      return;
+    }
+  }
+  actor.tx = rand(ZONE.xMin, ZONE.xMax);
+  actor.ty = rand(ZONE.yMin, ZONE.yMax);
+}
+
+// Moves an actor toward its target (px-correct), then makes it idle for a bit.
+function stepActor(a, dt, size, buildings, isBandit) {
+  if (a.wait > 0) {
+    a.wait -= dt;
+    a.moving = false;
+    return;
+  }
+  if (a.tx == null || a.ty == null) pickTarget(a, buildings);
+
+  const dxp = ((a.tx - a.x) * size.w) / 100;
+  const dyp = ((a.ty - a.y) * size.h) / 100;
+  const dist = Math.hypot(dxp, dyp);
+  const slow = !isBandit && a.happiness < 30 ? 0.6 : 1;
+  const step = (a.speed * SPEED_PX * slow * dt) / 1000;
+
+  if (dist <= step) {
+    a.x = a.tx;
+    a.y = a.ty;
+    a.tx = null;
+    a.wait = isBandit ? rand(200, 900) : rand(900, 4200);
+    a.moving = false;
+    return;
+  }
+  a.x += ((dxp / dist) * step * 100) / size.w;
+  a.y += ((dyp / dist) * step * 100) / size.h;
+  if (Math.abs(dxp) > 1) a.direction = dxp > 0 ? 1 : -1;
+  a.moving = true;
+}
+
+function applyToDom(prefix, a) {
+  const el = document.getElementById(`${prefix}-${a.id}`);
+  if (!el) return;
+  el.style.left = `${a.x}%`;
+  el.style.top = `${a.y}%`;
+  el.style.zIndex = Math.floor(a.y);
+  el.style.setProperty('--flip', a.direction === -1 ? -1 : 1);
+  el.dataset.moving = a.moving ? '1' : '0';
+}
+
+const RAIN_DROPS = Array.from({ length: 70 }, (_, i) => ({
+  id: i,
+  left: (i * 37) % 100,
+  delay: -((i * 13) % 10) / 10,
+  dur: 0.55 + ((i * 7) % 5) / 10,
+}));
 
 export default function CityCanvas() {
   const { state, dispatch } = useCivilization();
   const canvasRef = useRef(null);
-  const animRef = useRef(null);
-  const populationRef = useRef(state.population);
-  const banditsRef = useRef(state.bandits || []);
-  const [localPop, setLocalPop] = useState(state.population);
-  const [localBandits, setLocalBandits] = useState(state.bandits || []);
-  const [bubbleStates, setBubbleStates] = useState({}); // id -> message
-  const customMsgsRef = useRef(state.customMessages || []);
-  const [customInput, setCustomInput] = useState('');
-  const [isInputVisible, setIsInputVisible] = useState(false);
-
+  const sizeRef = useRef({ w: 1000, h: 560 });
   const localPopRef = useRef([...state.population]);
   const localBanditsRef = useRef([...(state.bandits || [])]);
+  const buildingsRef = useRef(state.buildings);
+  const popRef = useRef(state.population);
+  const customMsgsRef = useRef(state.customMessages || []);
 
-  // Sync population and bandits from state
+  const [bubbleStates, setBubbleStates] = useState({});
+  const [customInput, setCustomInput] = useState('');
+  const [isInputVisible, setIsInputVisible] = useState(false);
+  const bubbleTimers = useRef({});
+
+  // Keep refs in sync with reducer state
   useEffect(() => {
-    populationRef.current = state.population;
+    popRef.current = state.population;
     localPopRef.current = [...state.population];
-    setLocalPop(state.population);
   }, [state.population]);
+  useEffect(() => { localBanditsRef.current = [...(state.bandits || [])]; }, [state.bandits]);
+  useEffect(() => { buildingsRef.current = state.buildings; }, [state.buildings]);
+  useEffect(() => { customMsgsRef.current = state.customMessages || []; }, [state.customMessages]);
 
+  // Track canvas pixel size for px-accurate movement
   useEffect(() => {
-    banditsRef.current = state.bandits || [];
-    localBanditsRef.current = [...(state.bandits || [])];
-    setLocalBandits(state.bandits || []);
-  }, [state.bandits]);
+    const el = canvasRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width && height) sizeRef.current = { w: width, h: height };
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
+  // Animation loop (60fps via direct DOM writes)
   useEffect(() => {
-    customMsgsRef.current = state.customMessages || [];
-  }, [state.customMessages]);
-
-  // Animation loop for stickman movement (Smooth 60FPS via DOM refs)
-  useEffect(() => {
-    let lastTime = performance.now();
-    
+    let raf;
+    let last = performance.now();
     const loop = (time) => {
-      const dt = time - lastTime;
-      // Cap dt to prevent massive jumps when tab is inactive
-      const delta = Math.min(dt, 50); 
-      lastTime = time;
-      
-      // Update stickmen
-      if (localPopRef.current.length > 0) {
-        localPopRef.current.forEach(p => {
-          p.x += p.direction * p.speed * (delta / 50);
-          p.vy = p.vy || 0;
-          p.y += p.vy * (delta / 50);
-
-          if (p.x < 4) { p.x = 4; p.direction = 1; }
-          if (p.x > 96) { p.x = 96; p.direction = -1; }
-          if (p.y < 15) { p.y = 15; p.vy = Math.abs(p.vy) * 0.8; }
-          if (p.y > 90) { p.y = 90; p.vy = -Math.abs(p.vy) * 0.8; }
-          if (Math.random() < 0.01) p.vy = (Math.random() - 0.5) * 0.12;
-
-          const el = document.getElementById(`stickman-${p.id}`);
-          if (el) {
-            el.style.left = `${p.x}%`;
-            el.style.top = `${p.y}%`;
-            el.style.zIndex = Math.floor(p.y);
-            el.style.transform = `translate(-50%, -100%)`;
-            el.style.setProperty('--flip', p.direction === -1 ? -1 : 1);
-          }
-        });
+      const dt = Math.min(time - last, 50);
+      last = time;
+      const size = sizeRef.current;
+      const buildings = buildingsRef.current;
+      for (const p of localPopRef.current) {
+        stepActor(p, dt, size, buildings, false);
+        applyToDom('stickman', p);
       }
-
-      // Update bandits
-      if (localBanditsRef.current.length > 0) {
-        localBanditsRef.current.forEach(b => {
-          b.x += b.direction * b.speed * (delta / 50);
-          
-          if (b.x < 4) { b.x = 4; b.direction = 1; }
-          if (b.x > 96) { b.x = 96; b.direction = -1; }
-
-          const el = document.getElementById(`bandit-${b.id}`);
-          if (el) {
-            el.style.left = `${b.x}%`;
-            el.style.top = `${b.y}%`;
-            el.style.zIndex = Math.floor(b.y);
-            el.style.transform = `translate(-50%, -100%)`;
-            el.style.setProperty('--flip', b.direction === -1 ? -1 : 1);
-          }
-        });
+      for (const b of localBanditsRef.current) {
+        stepActor(b, dt, size, buildings, true);
+        applyToDom('bandit', b);
       }
-
-      animRef.current = requestAnimationFrame(loop);
+      raf = requestAnimationFrame(loop);
     };
-    animRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animRef.current);
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const say = useCallback((id, msg) => {
+    setBubbleStates(prev => ({ ...prev, [id]: msg }));
+    clearTimeout(bubbleTimers.current[id]);
+    bubbleTimers.current[id] = setTimeout(() => {
+      setBubbleStates(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }, 3500);
+  }, []);
+
+  const pickMessage = useCallback((stickman) => {
+    const custom = customMsgsRef.current;
+    if (custom.length > 0 && Math.random() < 0.4) return custom[Math.floor(Math.random() * custom.length)];
+    const pool = stickman.happiness < 50 ? UNHAPPY_MESSAGES : MOTIVATIONAL_MESSAGES;
+    return pool[Math.floor(Math.random() * pool.length)];
   }, []);
 
   // Random speech bubbles
   useEffect(() => {
-    const showBubble = () => {
-      const pop = populationRef.current;
+    const interval = setInterval(() => {
+      const pop = popRef.current;
       if (pop.length === 0) return;
-      const stickman = pop[Math.floor(Math.random() * pop.length)];
-      
-      let msg;
-      const customMsgs = customMsgsRef.current;
-      // 40% chance to show a custom message if available
-      if (customMsgs.length > 0 && Math.random() < 0.4) {
-        msg = customMsgs[Math.floor(Math.random() * customMsgs.length)];
-      } else {
-        const msgs = stickman.happiness < 50 ? UNHAPPY_MESSAGES : MOTIVATIONAL_MESSAGES;
-        msg = msgs[Math.floor(Math.random() * msgs.length)];
-      }
-
-      setBubbleStates(prev => ({ ...prev, [stickman.id]: msg }));
-      setTimeout(() => {
-        setBubbleStates(prev => {
-          const next = { ...prev };
-          delete next[stickman.id];
-          return next;
-        });
-      }, 3500);
+      const s = pop[Math.floor(Math.random() * pop.length)];
+      say(s.id, pickMessage(s));
+    }, 4500);
+    return () => {
+      clearInterval(interval);
+      Object.values(bubbleTimers.current).forEach(clearTimeout);
     };
+  }, [say, pickMessage]);
 
-    const interval = setInterval(showBubble, 4000 + Math.random() * 3000);
-    return () => clearInterval(interval);
-  }, []);
+  const handleTalk = useCallback((id) => {
+    const s = popRef.current.find(p => p.id === id);
+    if (s) say(id, pickMessage(s));
+  }, [say, pickMessage]);
 
-  // Idle Penalty: If not working, happiness decays over time
+  // Idle penalty: while no pomodoro is running happiness slowly decays
   useEffect(() => {
     if (state.pomodoroPhase !== 'idle') return;
-    
-    // Every 60 seconds of idle time, happiness decays by 1
-    const decayInterval = setInterval(() => {
-      dispatch({ type: 'DECAY_HAPPINESS' });
-    }, 60000);
-
-    return () => clearInterval(decayInterval);
+    const decay = setInterval(() => dispatch({ type: 'DECAY_HAPPINESS' }), 60000);
+    return () => clearInterval(decay);
   }, [state.pomodoroPhase, dispatch]);
 
-  const avgHappiness = localPop.length > 0
-    ? Math.round(localPop.reduce((s, p) => s + p.happiness, 0) / localPop.length)
+  const avgHappiness = state.population.length > 0
+    ? Math.round(state.population.reduce((s, p) => s + p.happiness, 0) / state.population.length)
     : 100;
 
   const handleAddCustomMessage = (e) => {
@@ -166,161 +193,82 @@ export default function CityCanvas() {
     }
   };
 
+  const rain = useMemo(() => RAIN_DROPS, []);
+
   return (
     <div className={`city-canvas weather-${state.weather}`} ref={canvasRef}>
-      {/* Green field background */}
       <div className="field-bg" />
-
-      {/* Dirt paths */}
       <div className="field-path path-h" />
       <div className="field-path path-v" />
+      <div className="field-plaza" />
 
-      {/* Decorative trees */}
-      {TREES.map(t => (
-        <div
-          key={t.id}
-          className="deco-tree"
-          style={{ left: `${t.x}%`, top: `${t.y}%`, zIndex: Math.floor(t.y), transform: `translate(-50%,-100%) scale(${t.scale})` }}
-        >
-          <div className="tree-crown" />
-          <div className="tree-trunk" />
-        </div>
-      ))}
+      <div className="cloud cloud-1" />
+      <div className="cloud cloud-2" />
+      <div className="cloud cloud-3" />
 
-      {/* Scene buildings */}
+      <Scenery />
+
       {state.buildings.map(b => (
         <SceneBuilding key={b.uid} building={b} />
       ))}
 
-      {/* Empty hint */}
-      {localPop.length === 0 && (
+      {state.population.length === 0 && (
         <div className="empty-city-hint">
-          <div className="hint-icon" style={{ display: 'flex', justifyContent: 'center' }}>
-            <Users size={48} color="var(--text-muted)" />
-          </div>
+          <Users size={48} />
           <p>Görevleri tamamla,<br />halkını büyüt!</p>
         </div>
       )}
 
-      {/* Stickmen — freely roaming the field */}
-      {localPop.map(stickman => (
+      {state.population.map(s => (
         <StickmanCharacter
-          key={stickman.id}
-          stickman={stickman}
-          bubbleMessage={bubbleStates[stickman.id] || null}
-          freeRoam
+          key={s.id}
+          stickman={s}
+          bubbleMessage={bubbleStates[s.id] || null}
+          onTalk={handleTalk}
         />
       ))}
 
-      {/* Bandits */}
-      {localBandits.map(bandit => (
-        <StickmanCharacter
-          key={bandit.id}
-          stickman={bandit}
-          freeRoam
-          isBandit
-        />
+      {(state.bandits || []).map(b => (
+        <StickmanCharacter key={b.id} stickman={b} isBandit />
       ))}
 
-      {/* Happiness overlay */}
-      {avgHappiness < 40 && localPop.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          top: 8, left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid rgba(239, 68, 68, 0.4)',
-          borderRadius: 20,
-          padding: '4px 14px',
-          fontSize: '0.75rem',
-          fontWeight: 700,
-          color: 'var(--red)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          zIndex: 100
-        }}>
-          <AlertTriangle size={14} /> Halk mutsuz! Görevleri tamamla!
+      {state.weather === 'storm' && (
+        <div className="rain" aria-hidden="true">
+          {rain.map(d => (
+            <i key={d.id} style={{ left: `${d.left}%`, animationDelay: `${d.delay}s`, animationDuration: `${d.dur}s` }} />
+          ))}
         </div>
       )}
 
-      {/* Custom Note UI */}
-      <div style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 100 }}>
+      {/* Weather badge */}
+      {state.weather !== 'clear' && (
+        <div className={`weather-badge ${state.weather}`}>
+          {state.weather === 'storm' ? <><CloudRain size={14} /> Fırtına</> : <><Sun size={14} /> Altın Çağ (+%50 altın)</>}
+        </div>
+      )}
+
+      {avgHappiness < 40 && state.population.length > 0 && (
+        <div className="unhappy-banner">
+          <AlertTriangle size={14} /> Halk mutsuz! Pomodoro başlat!
+        </div>
+      )}
+
+      <div className="note-ui">
         {isInputVisible ? (
-          <form onSubmit={handleAddCustomMessage} style={{ display: 'flex', gap: 6 }}>
+          <form onSubmit={handleAddCustomMessage} className="note-form">
             <input
               type="text"
               autoFocus
+              maxLength={60}
               value={customInput}
               onChange={e => setCustomInput(e.target.value)}
               placeholder="Şehre bir not bırak..."
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-sm)',
-                border: '2px solid var(--border)',
-                background: 'var(--bg-card)',
-                color: 'var(--text-primary)',
-                fontFamily: 'var(--font)',
-                fontSize: '0.75rem',
-                outline: 'none',
-                boxShadow: '2px 2px 0px var(--border)'
-              }}
             />
-            <button
-              type="submit"
-              style={{
-                padding: '6px 10px',
-                borderRadius: 'var(--radius-sm)',
-                border: '2px solid var(--border)',
-                background: 'var(--green)',
-                color: 'white',
-                cursor: 'pointer',
-                fontFamily: 'var(--font)',
-                fontWeight: 700,
-                boxShadow: '2px 2px 0px var(--border)'
-              }}
-            >
-              Gönder
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsInputVisible(false)}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 'var(--radius-sm)',
-                border: '2px solid var(--border)',
-                background: 'var(--bg-card)',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                fontFamily: 'var(--font)',
-                fontWeight: 700,
-                boxShadow: '2px 2px 0px var(--border)'
-              }}
-            >
-              İptal
-            </button>
+            <button type="submit" className="note-send">Gönder</button>
+            <button type="button" className="note-cancel" onClick={() => setIsInputVisible(false)}>İptal</button>
           </form>
         ) : (
-          <button
-            onClick={() => setIsInputVisible(true)}
-            title="Şehre Not Bırak"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              border: '2px solid var(--border)',
-              background: 'var(--bg-card)',
-              color: 'var(--text-primary)',
-              cursor: 'pointer',
-              boxShadow: '2px 2px 0px var(--border)',
-              transition: 'transform 0.1s'
-            }}
-            onMouseOver={e => e.currentTarget.style.transform = 'translate(-1px, -1px)'}
-            onMouseOut={e => e.currentTarget.style.transform = 'translate(0, 0)'}
-          >
+          <button className="note-fab" onClick={() => setIsInputVisible(true)} title="Şehre Not Bırak">
             <MessageCircle size={18} />
           </button>
         )}

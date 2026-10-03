@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import { PROFESSIONS, STICKMAN_NAMES } from '../data/messages.js';
-import { CIVILIZATION_LEVELS } from '../data/buildings.js';
+import { BUILDINGS, CIVILIZATION_LEVELS } from '../data/buildings.js';
 
 const CivilizationContext = createContext(null);
 
@@ -16,6 +16,10 @@ const INITIAL_STATE = {
   pomodoroPhase: 'idle', // idle | work | break
   pomodoroSeconds: 25 * 60,
   pomodoroCount: 0,
+  pomodoroPaused: false,
+  phaseEndsAt: null, // epoch ms, keeps the timer accurate in background tabs
+  workMinutes: 25,
+  breakMinutes: 5,
 
   // Civilization
   gold: 100,
@@ -30,6 +34,7 @@ const INITIAL_STATE = {
 
   // Meta
   lastDayCheck: new Date().toDateString(),
+  dayEnded: false, // today's evaluation already happened
   showDayEnd: false,
   dayEndResult: null,
   notifications: [],
@@ -41,23 +46,46 @@ const INITIAL_STATE = {
   bandits: [], // { id, x, y }
 };
 
+// Fresh day: clear the counter and drop yesterday's finished todos
+function rollover(s) {
+  return {
+    ...s,
+    todayCompleted: 0,
+    dayEnded: false,
+    lastDayCheck: new Date().toDateString(),
+    todos: s.todos.filter(t => !t.completed),
+  };
+}
+
 function loadState() {
   try {
     const saved = localStorage.getItem('stickcity_state');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Reset today's progress if it's a new day
+      const base = {
+        ...INITIAL_STATE,
+        ...parsed,
+        pomodoroPhase: 'idle',
+        activePomodoro: null,
+        pomodoroPaused: false,
+        phaseEndsAt: null,
+        pomodoroSeconds: (parsed.workMinutes || 25) * 60,
+        showDayEnd: false,
+        dayEndResult: null,
+        // refresh names/icons of saved buildings after renames
+        buildings: (parsed.buildings || []).map(b => {
+          const def = BUILDINGS.find(d => d.id === b.id);
+          return def ? { ...b, name: def.name, iconName: def.iconName } : b;
+        }),
+      };
       if (parsed.lastDayCheck !== new Date().toDateString()) {
-        return {
-          ...parsed,
-          todayCompleted: 0,
-          lastDayCheck: new Date().toDateString(),
-          pomodoroPhase: 'idle',
-          activePomodoro: null,
-          pomodoroSeconds: 25 * 60,
-        };
+        // A day passed while the app was closed: judge it automatically
+        if (!parsed.dayEnded && (parsed.population || []).length > 0) {
+          return { ...base, pendingAutoDayEnd: true };
+        }
+        return rollover(base);
       }
-      return { ...INITIAL_STATE, ...parsed, pomodoroPhase: 'idle', activePomodoro: null, pomodoroSeconds: 25 * 60 };
+      return base;
     }
   } catch (e) {}
   return INITIAL_STATE;
@@ -65,7 +93,16 @@ function loadState() {
 
 function saveState(state) {
   try {
-    const toSave = { ...state, pomodoroPhase: 'idle', activePomodoro: null, pomodoroSeconds: 25 * 60, showDayEnd: false, notifications: [] };
+    const toSave = {
+      ...state,
+      pomodoroPhase: 'idle',
+      activePomodoro: null,
+      pomodoroPaused: false,
+      phaseEndsAt: null,
+      pomodoroSeconds: state.workMinutes * 60,
+      showDayEnd: false,
+      notifications: [],
+    };
     localStorage.setItem('stickcity_state', JSON.stringify(toSave));
   } catch (e) {}
 }
@@ -231,7 +268,9 @@ function reducer(state, action) {
         ...state,
         activePomodoro: action.id,
         pomodoroPhase: 'work',
-        pomodoroSeconds: 25 * 60,
+        pomodoroPaused: false,
+        pomodoroSeconds: state.workMinutes * 60,
+        phaseEndsAt: Date.now() + state.workMinutes * 60 * 1000,
         bandits: [], // Bandits run away when you start working!
         notifications: notifs,
       };
@@ -239,58 +278,115 @@ function reducer(state, action) {
 
 
     case 'TICK_POMODORO': {
-      if (state.pomodoroPhase === 'idle') return state;
-      const newSecs = state.pomodoroSeconds - 1;
-      if (newSecs <= 0) {
-        if (state.pomodoroPhase === 'work') {
-          // Work session done → update pomodoro count on todo
-          const updatedTodos = state.todos.map(t => {
-            if (t.id === state.activePomodoro) {
-              const newCount = t.pomodorosDone + 1;
-              return { ...t, pomodorosDone: newCount };
-            }
-            return t;
-          });
-          
-          const newConsecutive = state.consecutivePomodoros + 1;
-          const isGoldenAge = newConsecutive >= 3;
-          let newWeather = state.weather;
-          let notifs = state.notifications;
-          
-          if (isGoldenAge && state.weather !== 'golden_age') {
-            newWeather = 'golden_age';
-            notifs = [...notifs, { id: `notif_${Date.now()}_weather`, message: '✨ Şehirde Altın Çağ başladı! Görevlerden daha çok altın kazanacaksın!', type: 'success' }];
-          }
-
-          const notification = { id: `notif_${Date.now()}`, message: 'Pomodoro bitti! Mola zamanı', type: 'pomodoro' };
-          notifs = [...notifs, notification];
-
-          return {
-            ...state,
-            todos: updatedTodos,
-            pomodoroPhase: 'break',
-            pomodoroSeconds: 5 * 60,
-            pomodoroCount: state.pomodoroCount + 1,
-            consecutivePomodoros: newConsecutive,
-            weather: newWeather,
-            notifications: notifs,
-          };
-        } else {
-          // Break done → back to work
-          const notification = { id: `notif_${Date.now()}`, message: 'Mola bitti! Çalışma zamanı!', type: 'info' };
-          return {
-            ...state,
-            pomodoroPhase: 'work',
-            pomodoroSeconds: 25 * 60,
-            notifications: [...state.notifications, notification],
-          };
-        }
+      if (state.pomodoroPhase === 'idle' || state.pomodoroPaused) return state;
+      const remaining = state.phaseEndsAt
+        ? Math.ceil((state.phaseEndsAt - Date.now()) / 1000)
+        : state.pomodoroSeconds - 1;
+      if (remaining > 0) {
+        return remaining === state.pomodoroSeconds ? state : { ...state, pomodoroSeconds: remaining };
       }
-      return { ...state, pomodoroSeconds: newSecs };
+
+      if (state.pomodoroPhase === 'work') {
+        // Work session done: count it on the todo, pay a small reward
+        const active = state.todos.find(t => t.id === state.activePomodoro);
+        const updatedTodos = state.todos.map(t =>
+          t.id === state.activePomodoro ? { ...t, pomodorosDone: t.pomodorosDone + 1 } : t
+        );
+        const reward = Math.floor(10 * (1 + state.goldBonus));
+        const newConsecutive = state.consecutivePomodoros + 1;
+        const stamp = Date.now();
+        let notifs = [...state.notifications];
+        let weather = state.weather;
+
+        if (state.weather === 'storm') {
+          weather = 'clear';
+          notifs.push({ id: `n_${stamp}_clear`, message: 'Fırtına dindi, güneş açtı!', type: 'success' });
+        }
+        if (newConsecutive >= 3 && weather !== 'golden_age') {
+          weather = 'golden_age';
+          notifs.push({ id: `n_${stamp}_weather`, message: 'Şehirde Altın Çağ başladı! Görevlerden +%50 altın kazanacaksın!', type: 'success' });
+        }
+        if (active && active.pomodorosDone + 1 >= active.pomodorosNeeded) {
+          notifs.push({ id: `n_${stamp}_ready`, message: `"${active.title}" için yeterli pomodoro tamamlandı, görevi bitirebilirsin!`, type: 'info' });
+        }
+        notifs.push({ id: `n_${stamp}`, message: `Pomodoro bitti! +${reward} altın. Mola zamanı`, type: 'pomodoro' });
+
+        return {
+          ...state,
+          todos: updatedTodos,
+          gold: state.gold + reward,
+          population: state.population.map(p => ({ ...p, happiness: Math.min(100, p.happiness + 2) })),
+          pomodoroPhase: 'break',
+          pomodoroSeconds: state.breakMinutes * 60,
+          phaseEndsAt: stamp + state.breakMinutes * 60 * 1000,
+          pomodoroCount: state.pomodoroCount + 1,
+          consecutivePomodoros: newConsecutive,
+          weather,
+          notifications: notifs,
+        };
+      }
+
+      // Break finished: back to work if the todo is still open, otherwise stop
+      const stillOpen = state.todos.some(t => t.id === state.activePomodoro && !t.completed);
+      if (!stillOpen) {
+        return {
+          ...state,
+          activePomodoro: null,
+          pomodoroPhase: 'idle',
+          phaseEndsAt: null,
+          pomodoroSeconds: state.workMinutes * 60,
+          notifications: [...state.notifications, { id: `n_${Date.now()}`, message: 'Mola bitti! Yeni bir görev seç.', type: 'info' }],
+        };
+      }
+      return {
+        ...state,
+        pomodoroPhase: 'work',
+        pomodoroSeconds: state.workMinutes * 60,
+        phaseEndsAt: Date.now() + state.workMinutes * 60 * 1000,
+        notifications: [...state.notifications, { id: `n_${Date.now()}`, message: 'Mola bitti! Çalışma zamanı!', type: 'info' }],
+      };
+    }
+
+    case 'PAUSE_POMODORO': {
+      if (state.pomodoroPhase === 'idle' || state.pomodoroPaused) return state;
+      const secs = Math.max(1, Math.ceil((state.phaseEndsAt - Date.now()) / 1000));
+      return { ...state, pomodoroPaused: true, pomodoroSeconds: secs, phaseEndsAt: null };
+    }
+
+    case 'RESUME_POMODORO': {
+      if (state.pomodoroPhase === 'idle' || !state.pomodoroPaused) return state;
+      return { ...state, pomodoroPaused: false, phaseEndsAt: Date.now() + state.pomodoroSeconds * 1000 };
+    }
+
+    case 'SKIP_BREAK': {
+      if (state.pomodoroPhase !== 'break') return state;
+      return {
+        ...state,
+        pomodoroPhase: 'work',
+        pomodoroPaused: false,
+        pomodoroSeconds: state.workMinutes * 60,
+        phaseEndsAt: Date.now() + state.workMinutes * 60 * 1000,
+      };
+    }
+
+    case 'SET_DURATIONS': {
+      if (state.pomodoroPhase !== 'idle') return state;
+      const workMinutes = Math.min(90, Math.max(1, action.work));
+      const breakMinutes = Math.min(30, Math.max(1, action.rest));
+      return { ...state, workMinutes, breakMinutes, pomodoroSeconds: workMinutes * 60 };
     }
 
     case 'STOP_POMODORO': {
-      return { ...state, activePomodoro: null, pomodoroPhase: 'idle', pomodoroSeconds: 25 * 60 };
+      return {
+        ...state,
+        activePomodoro: null,
+        pomodoroPhase: 'idle',
+        pomodoroPaused: false,
+        phaseEndsAt: null,
+        pomodoroSeconds: state.workMinutes * 60,
+        // abandoning a work session breaks the golden-age streak
+        consecutivePomodoros: state.pomodoroPhase === 'work' ? 0 : state.consecutivePomodoros,
+      };
     }
 
     case 'BUY_BUILDING': {
@@ -345,58 +441,72 @@ function reducer(state, action) {
     }
 
     case 'DAY_END': {
+      if (state.dayEnded) {
+        const notif = { id: `n_${Date.now()}`, message: 'Bugünü zaten bitirdin. Yarın yeni bir gün!', type: 'info' };
+        return { ...state, notifications: [...state.notifications, notif] };
+      }
       const { todayCompleted, todayTarget, population, happinessProtection, shield, shieldUsed } = state;
       const ratio = todayTarget > 0 ? todayCompleted / todayTarget : 1;
+      const common = {
+        todayCompleted: 0,
+        dayEnded: true,
+        lastDayCheck: new Date().toDateString(),
+        showDayEnd: true,
+        bandits: [],
+        pomodoroPhase: 'idle',
+        pomodoroPaused: false,
+        phaseEndsAt: null,
+        activePomodoro: null,
+        pomodoroSeconds: state.workMinutes * 60,
+      };
 
       if (ratio >= 0.8) {
-        // Good day! happiness up
         const updatedPop = population.map(p => ({ ...p, happiness: Math.min(100, p.happiness + 10) }));
         const passiveIncome = state.passiveGold;
         return {
           ...state,
+          ...common,
           population: updatedPop,
           gold: state.gold + passiveIncome,
-          todayCompleted: 0,
-          lastDayCheck: new Date().toDateString(),
-          showDayEnd: true,
+          shieldUsed: false, // the castle recharges after a good day
           weather: 'clear',
-          dayEndResult: { type: 'good', ratio, passiveIncome },
-        };
-      } else {
-        // Bad day
-        const happinessLoss = happinessProtection ? 10 : 20;
-        let updatedPop = population.map(p => ({ ...p, happiness: Math.max(0, p.happiness - happinessLoss) }));
-
-        // Shield: prevent population loss once
-        if (shield && !shieldUsed) {
-          return {
-            ...state,
-            population: updatedPop,
-            todayCompleted: 0,
-            lastDayCheck: new Date().toDateString(),
-            shieldUsed: true,
-            showDayEnd: true,
-            weather: 'storm',
-            consecutivePomodoros: 0,
-            dayEndResult: { type: 'shielded', ratio, happinessLoss },
-          };
-        }
-
-        // Remove unhappy stickmen
-        const leaving = updatedPop.filter(p => p.happiness === 0);
-        updatedPop = updatedPop.filter(p => p.happiness > 0);
-
-        return {
-          ...state,
-          population: updatedPop,
-          todayCompleted: 0,
-          lastDayCheck: new Date().toDateString(),
-          showDayEnd: true,
-          weather: 'storm',
-          consecutivePomodoros: 0,
-          dayEndResult: { type: 'bad', ratio, happinessLoss, lostCount: leaving.length },
+          dayEndResult: { type: 'good', ratio, passiveIncome, completed: todayCompleted },
         };
       }
+
+      const happinessLoss = happinessProtection ? 10 : 20;
+      let updatedPop = population.map(p => ({ ...p, happiness: Math.max(0, p.happiness - happinessLoss) }));
+
+      // Castle: prevents citizens from leaving once
+      if (shield && !shieldUsed) {
+        return {
+          ...state,
+          ...common,
+          population: updatedPop,
+          shieldUsed: true,
+          weather: 'storm',
+          consecutivePomodoros: 0,
+          dayEndResult: { type: 'shielded', ratio, happinessLoss, completed: todayCompleted },
+        };
+      }
+
+      const lostCount = updatedPop.filter(p => p.happiness === 0).length;
+      updatedPop = updatedPop.filter(p => p.happiness > 0);
+      return {
+        ...state,
+        ...common,
+        population: updatedPop,
+        weather: 'storm',
+        consecutivePomodoros: 0,
+        dayEndResult: { type: 'bad', ratio, happinessLoss, lostCount, completed: todayCompleted },
+      };
+    }
+
+    // The app was closed over midnight: judge the missed day, then start a fresh one
+    case 'AUTO_DAY_ROLLOVER': {
+      if (!state.pendingAutoDayEnd) return state;
+      const judged = reducer({ ...state, pendingAutoDayEnd: false, dayEnded: false }, { type: 'DAY_END' });
+      return rollover(judged);
     }
 
     case 'CLOSE_DAY_END': {
@@ -510,6 +620,11 @@ export function CivilizationProvider({ children }) {
   useEffect(() => {
     saveState(state);
   }, [state]);
+
+  // Judge a day that ended while the app was closed
+  useEffect(() => {
+    if (state.pendingAutoDayEnd) dispatch({ type: 'AUTO_DAY_ROLLOVER' });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto dismiss notifications
   useEffect(() => {

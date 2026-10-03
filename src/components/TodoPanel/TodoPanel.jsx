@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useCivilization } from '../../store/CivilizationContext.jsx';
 import { usePomodoro } from '../../hooks/usePomodoro.js';
-import { ClipboardList, Coins, Target, CheckCircle, Smile, Building2, Timer, Check, X, Coffee, Play, Square } from 'lucide-react';
+import { ClipboardList, Coins, Target, CheckCircle, Smile, Building2, Timer, Check, X, Coffee, Play, Square, Pause, SkipForward } from 'lucide-react';
 
 const DIFFICULTY_LABELS = { easy: 'Kolay', normal: 'Normal', hard: 'Zor' };
 const DIFFICULTY_GOLD = { easy: 30, normal: 50, hard: 80 };
@@ -119,7 +119,7 @@ export default function TodoPanel() {
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0', fontSize: '0.85rem' }}>
             Henüz görev yok.<br />
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}>
-              İlk görevini ekle ve medeniyetini kur! <Building2 size={16} />
+              İlk görevini ekle ve şehrini kur! <Building2 size={16} />
             </div>
           </div>
         )}
@@ -217,15 +217,28 @@ function TodoItem({ todo, isActivePomodoro, onComplete, onDelete, onPomodoro, go
 }
 
 function PomodoroBar({ pomodoro, todos }) {
-  const totalSecs = pomodoro.phase === 'work' ? 25 * 60 : 5 * 60;
+  const totalSecs = (pomodoro.phase === 'work' ? pomodoro.workMinutes : pomodoro.breakMinutes) * 60;
   const progress = ((totalSecs - pomodoro.seconds) / totalSecs) * 100;
   const activeTodo = todos.find(t => t.id === pomodoro.activeId);
 
   if (pomodoro.phase === 'idle') {
+    const presets = [[15, 3], [25, 5], [50, 10]];
     return (
       <div className="pomodoro-bar">
         <div className="pomodoro-inactive" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <Timer size={14} /> Bir göreve tıkla ve Pomodoro başlat
+          <Timer size={14} /> Bir görevde ▶ tuşuna bas
+        </div>
+        <div className="duration-row">
+          {presets.map(([w, r]) => (
+            <button
+              key={w}
+              type="button"
+              className={`duration-chip ${pomodoro.workMinutes === w ? 'active' : ''}`}
+              onClick={() => pomodoro.setDurations(w, r)}
+            >
+              {w}/{r} dk
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -247,22 +260,31 @@ function PomodoroBar({ pomodoro, todos }) {
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={strokeDash}
-            className="pomodoro-progress"
-            style={{ transform: 'rotate(-90deg)', transformOrigin: '24px 24px', transition: 'stroke-dashoffset 1s linear' }}
+            style={{ transform: 'rotate(-90deg)', transformOrigin: '24px 24px', transition: 'stroke-dashoffset 0.5s linear' }}
           />
         </svg>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <span className={`pomodoro-phase-badge ${pomodoro.phase}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             {pomodoro.phase === 'work' ? <Timer size={12} /> : <Coffee size={12} />}
-            {pomodoro.phase === 'work' ? 'Çalışma' : 'Mola'}
+            {pomodoro.phase === 'work' ? 'Çalışma' : 'Mola'}{pomodoro.paused ? ' · Duraklatıldı' : ''}
           </span>
           {activeTodo && (
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {activeTodo.title}
             </div>
           )}
         </div>
         <span className="pomodoro-time">{pomodoro.formatted}</span>
+      </div>
+      <div className="pomodoro-controls">
+        {pomodoro.paused ? (
+          <button className="ctl-btn" onClick={pomodoro.resume}><Play size={12} /> Devam</button>
+        ) : (
+          <button className="ctl-btn" onClick={pomodoro.pause}><Pause size={12} /> Duraklat</button>
+        )}
+        {pomodoro.phase === 'break' && (
+          <button className="ctl-btn" onClick={pomodoro.skipBreak}><SkipForward size={12} /> Molayı Atla</button>
+        )}
         <button className="stop-btn" onClick={pomodoro.stop} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <Square size={12} /> Durdur
         </button>

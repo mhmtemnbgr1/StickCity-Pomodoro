@@ -1,7 +1,7 @@
 export const BUILDINGS = [
   {
     id: "small_house",
-    name: "Küçük Ev",
+    name: "Müstakil Ev",
     iconName: "Home",
     description: "+2 nüfus kapasitesi",
     cost: 50,
@@ -11,7 +11,7 @@ export const BUILDINGS = [
   },
   {
     id: "big_house",
-    name: "Büyük Ev",
+    name: "Apartman",
     iconName: "HousePlus",
     description: "+5 nüfus kapasitesi",
     cost: 150,
@@ -41,8 +41,8 @@ export const BUILDINGS = [
   },
   {
     id: "castle",
-    name: "Kale",
-    iconName: "Castle",
+    name: "Belediye",
+    iconName: "Landmark",
     description: "1 gün nüfus kaybını engeller",
     cost: 500,
     effect: { shield: true },
@@ -51,7 +51,7 @@ export const BUILDINGS = [
   },
   {
     id: "market",
-    name: "Çarşı",
+    name: "AVM",
     iconName: "Store",
     description: "Her gün +20 altın pasif gelir",
     cost: 250,
@@ -62,9 +62,9 @@ export const BUILDINGS = [
 ];
 
 export const CIVILIZATION_LEVELS = [
-  { level: 1, name: "Aşiret", requiredTodos: 0, requiredBuildings: 0, iconName: "Tent", color: "#8d6e63" },
-  { level: 2, name: "Köy", requiredTodos: 10, requiredBuildings: 1, iconName: "Tractor", color: "#a8cc8c" },
-  { level: 3, name: "Kasaba", requiredTodos: 30, requiredBuildings: 3, iconName: "Building", color: "#4fc3f7" },
-  { level: 4, name: "Şehir", requiredTodos: 75, requiredBuildings: 6, iconName: "Building2", color: "#ffb74d" },
-  { level: 5, name: "İmparatorluk", requiredTodos: 150, requiredBuildings: 10, iconName: "Crown", color: "#ffd700" },
+  { level: 1, name: "Mahalle", requiredTodos: 0, requiredBuildings: 0, iconName: "Home", color: "#8d6e63" },
+  { level: 2, name: "Semt", requiredTodos: 10, requiredBuildings: 1, iconName: "Store", color: "#2f9e44" },
+  { level: 3, name: "İlçe", requiredTodos: 30, requiredBuildings: 3, iconName: "Building", color: "#1c7ed6" },
+  { level: 4, name: "Şehir", requiredTodos: 75, requiredBuildings: 6, iconName: "Building2", color: "#e8590c" },
+  { level: 5, name: "Metropol", requiredTodos: 150, requiredBuildings: 10, iconName: "Rocket", color: "#b7791f" },
 ];
